@@ -4,10 +4,11 @@ import joblib
 from flask import Flask, request, jsonify
 from collections import defaultdict
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 
-API_KEY = "c930113297ed5cdf9a3639c4cdecb327"
+API_KEY = os.getenv("AZURE_API_KEY")
 
 model_files = [
     '黒ビール(本)_model.pkl',
