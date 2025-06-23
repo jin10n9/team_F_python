@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>ビール予測値の棒グラフ</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 0 20px;
+    }
+    h2 {
+      text-align: center;
+    }
+    .chart-container {
+      margin-bottom: 50px;
+    }
+    canvas {
+      background: #f9f9f9;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h2>ビールごとの曜日別予測値棒グラフ</h2>
+  <div id="charts"></div>
+
+  <script>
+    // 曜日の順番固定（必要に応じて）
+    const weekOrder = ['曜日_月', '曜日_火', '曜日_水', '曜日_木', '曜日_金', '曜日_土'];
+
+    fetch('predicted_sales.json')
+      .then(res => res.json())
+      .then(data => {
+        const sales = data.predicted_sales;
+
+        // モデル名ごとにデータをまとめる
+        const grouped = {};
+        sales.forEach(item => {
+          const beer = item['モデル名'];
+          if (!grouped[beer]) grouped[beer] = {};
+          grouped[beer][item['曜日']] = item['予測値'];
+        });
+
+        const chartsDiv = document.getElementById('charts');
+
+        // グループごとにキャンバス作成してChart.jsで描画
+        Object.entries(grouped).forEach(([beer, dayData], index) => {
+          // 曜日の順で予測値を取得。値が無い場合は0かnullに
+          const values = weekOrder.map(day => dayData[day] ?? 0);
+
+          // チャートを置くコンテナ作成
+          const container = document.createElement('div');
+          container.classList.add('chart-container');
+
+          const title = document.createElement('h3');
+          title.textContent = beer;
+          container.appendChild(title);
+
+          // canvas要素作成
+          const canvas = document.createElement('canvas');
+          canvas.id = 'chart-' + index;
+          container.appendChild(canvas);
+          chartsDiv.appendChild(container);
+
+          // Chart.jsで棒グラフ作成
+          new Chart(canvas.getContext('2d'), {
+            type: 'bar',
+            data: {
+              labels: weekOrder.map(day => day.replace('曜日_', '')), // 「曜日_金」→「金」など
+              datasets: [{
+                label: '予測値',
+                data: values,
+                backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              scales: {
+                y: {
+                  beginAtZero: true,
+                  title: {
+                    display: true,
+                    text: '予測値'
+                  }
+                },
+                x: {
+                  title: {
+                    display: true,
+                    text: '曜日'
+                  }
+                }
+              },
+              plugins: {
+                legend: {
+                  display: false
+                },
+                tooltip: {
+                  enabled: true
+                }
+              }
+            }
+          });
+        });
+      })
+      .catch(err => {
+        console.error('JSON読み込みエラー:', err);
+      });
+  </script>
+</body>
+</html>
