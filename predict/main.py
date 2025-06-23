@@ -1,12 +1,12 @@
 import requests
 import pandas as pd
 import joblib
-from flask import Flask, request, jsonify
 from collections import defaultdict
 from datetime import datetime
 import os
-
-app = Flask(__name__)
+import logging
+import json
+import azure.functions as func
 
 API_KEY = os.getenv("AZURE_API_KEY")
 
@@ -29,7 +29,7 @@ weekday_ja = {
     "Sunday": "日"
 }
 
-def get_weather(lat, lon, api_key, units="metric", lang="ja"): #天気情報を取得する
+def get_weather(lat, lon, api_key, units="metric", lang="ja"):
     base_url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {
         "lat": lat,
@@ -40,28 +40,28 @@ def get_weather(lat, lon, api_key, units="metric", lang="ja"): #天気情報を�
     }
 
     try:
-        response = requests.get(base_url, params=params) #API情報取得
+        response = requests.get(base_url, params=params)
         response.raise_for_status()
         data = response.json()
 
         daily_data = defaultdict(lambda: {"temps": [], "rains": [], "weather_18h": ""})
-        for entry in data.get("list", []): 
+        for entry in data.get("list", []):
             dt_txt = entry.get("dt_txt", "")
-            time_part = dt_txt[-8:] #時刻
-            date_part = dt_txt[:10] #日付
+            time_part = dt_txt[-8:]
+            date_part = dt_txt[:10]
 
-            if time_part in ["18:00:00", "21:00:00"]: #18時と21時(営業時間に近い)のデータを取得する
+            if time_part in ["18:00:00", "21:00:00"]:
                 temp = entry["main"]["temp"]
                 rain = entry.get("rain", {}).get("3h", 0.0)
-                daily_data[date_part]["temps"].append(temp) #気温
-                daily_data[date_part]["rains"].append(rain) #降水量
+                daily_data[date_part]["temps"].append(temp)
+                daily_data[date_part]["rains"].append(rain)
 
         result_list = []
         for date, info in sorted(daily_data.items()):
             if len(info["temps"]) == 2:
                 date_obj = datetime.strptime(date, "%Y-%m-%d")
                 weekday_en = date_obj.strftime("%A")
-                weekday = weekday_ja[weekday_en]
+                weekday = weekday_ja.get(weekday_en, "")
                 avg_temp = sum(info["temps"]) / 2
                 avg_rain = sum(info["rains"]) / 2
 
@@ -75,17 +75,17 @@ def get_weather(lat, lon, api_key, units="metric", lang="ja"): #天気情報を�
         return result_list
 
     except requests.exceptions.RequestException as e:
-        print(f"エラーが発生しました: {e}")
+        logging.error(f"天気取得エラー: {e}")
         return []
 
 def predict_sales(lat=35.6895, lon=139.692):
     data = get_weather(lat, lon, API_KEY)
     df = pd.DataFrame(data)
-    df = df[df['曜日'] != '日'] #日曜を除く
+    df = df[df['曜日'] != '日']
 
-    df_onehot = pd.get_dummies(df, columns=['曜日']) #ワンホット化
-
+    df_onehot = pd.get_dummies(df, columns=['曜日'])
     feature_cols = ['平均気温', '降水量', '曜日_月', '曜日_火', '曜日_水', '曜日_木', '曜日_金', '曜日_土']
+
     for col in feature_cols:
         if col not in df_onehot.columns:
             df_onehot[col] = 0
@@ -95,7 +95,7 @@ def predict_sales(lat=35.6895, lon=139.692):
     results_list = []
     for model_file in model_files:
         model_name = model_file.replace('_model.pkl', '')
-        model = joblib.load(model_file)
+        model = joblib.load(os.path.join(os.getcwd(), model_file))
         predicted_sales = model.predict(X_future)
 
         for day, pred in zip(df['曜日'], predicted_sales):
@@ -106,3 +106,20 @@ def predict_sales(lat=35.6895, lon=139.692):
             })
 
     return results_list
+
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        prediction = predict_sales()
+        result = {"predicted_sales": prediction}
+        return func.HttpResponse(
+            json.dumps(result, ensure_ascii=False, indent=4),
+            mimetype="application/json",
+            status_code=200
+        )
+    except Exception as e:
+        error_result = {"error": str(e)}
+        return func.HttpResponse(
+            json.dumps(error_result, ensure_ascii=False),
+            mimetype="application/json",
+            status_code=500
+        )
